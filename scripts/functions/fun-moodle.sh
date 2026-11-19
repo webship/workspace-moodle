@@ -203,8 +203,10 @@ function moodle_build() {
       --dbtype=mariadb --dbhost=db --dbname=db --dbuser=db --dbpass=db --prefix=mdl_ \
       --fullname="${doc_name} ${PROJECT_NAME}" --shortname="${PROJECT_NAME}" \
       --adminuser="${account_name}" --adminpass="${account_pass}" --adminemail="${account_mail}" \
-      --supportemail=support@example.com --noreplyemail=noreply@example.com < /dev/null \
+      --supportemail=support@example.com < /dev/null \
       || { echo "The installer failed." ; exit 1 ; } ;
+    # The no-reply address through the site's own settings tool: the installer of the 4.5 line has no option for it.
+    ddev exec php /var/www/html/moodle/admin/cli/cfg.php --name=noreplyaddress --set=noreply@example.com < /dev/null ;
     if [ "${TEST_COURSE}" == 'yes' ] ; then
       moodle_test_site --settings --course || { echo "The test course could not be written." ; exit 1 ; } ;
     fi

@@ -27,10 +27,12 @@ Feature: The site answers and its accounts work
       | student       |
       | student2      |
 
+  # The words of the refusal differ between the release lines: the login form again, and no session, is
+  # what every line does.
   Scenario: A wrong password is refused
     Given I am an anonymous user
     When I log in with the username "student" and the password "wrong-password"
-    Then I should see the error message "Your login info may be incorrect. Please try again."
+    Then I should see the login form
     And I should not be logged in
 
   Scenario: The student finds the test course and its activities
@@ -45,7 +47,8 @@ Feature: The site answers and its accounts work
     When I open the course "Software Testing 101"
     Then I should see the enrolment options of the course
 
+  # A 5.x site sends a visitor to the login form; a 4.5 site shows its front page.
   Scenario: Logging out ends the session
     Given I am a logged in user with the "teacher" user
     When I log out
-    Then I should see the login form
+    Then I should not be logged in
