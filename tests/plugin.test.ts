@@ -59,6 +59,9 @@ test('the functions carry the names the core\'s tools look for, and build the si
   assert.match(src, /--dbtype=mariadb --dbhost=db --dbname=db --dbuser=db --dbpass=db/, 'the database settings are the container\'s own values');
   assert.match(src, /--dataroot=\/var\/www\/html\/moodledata/, 'the data folder beside the package, outside the web root');
   assert.match(src, /--adminuser="\$\{account_name\}" --adminpass="\$\{account_pass\}"/, 'the administrator is the workspace account');
+  // An option every line's installer takes (4.5 has no --noreplyemail): the no-reply address is a setting after it.
+  assert.doesNotMatch(src, /--noreplyemail/, 'the installer call carries no option the 4.5 installer lacks');
+  assert.match(src, /admin\/cli\/cfg\.php --name=noreplyaddress --set=noreply@example\.com/, 'the no-reply address is set after the install');
   assert.match(src, /max_input_vars = 5000/);
   assert.match(src, /web_extra_daemons:/, 'cron runs in the web container');
   assert.match(src, /admin\/cli\/cron\.php --keep-alive=60/);

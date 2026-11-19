@@ -167,9 +167,10 @@ run, places `tests/features/site.feature` when the project has none, and makes s
 accounts are on the site. The testing stack lives at the top of the project, beside `moodle/`. Run it
 again and it adds what is missing and keeps what you changed.
 
-`tests/features/site.feature` passes on a site built with `--install --add-users --test-course`. The
-features of the step pack run on such a site as they are: the test course and the accounts are the
-same as the pack's own build.
+`tests/features/site.feature` passes on a site built with `--install --add-users --test-course`, on
+5.3 and on 4.5. The features of the step pack run on a 5.3 site built that way as they are: the test
+course and the accounts are the same as the pack's own build. The pack is made for the 5.x line; on
+4.5 some pages and messages differ (the refusal of a wrong password, the page after logging out).
 
 ## The AI items
 
