@@ -90,7 +90,7 @@ only this:
 | Install | `wp core install` | `admin/cli/install.php --non-interactive`, with the container's own database settings and the workspace account as the administrator |
 | Cron | WordPress's own | `admin/cli/cron.php` again and again, run by the web container's process supervisor (`web_extra_daemons`); on another runtime kept running beside the web server by the core's layer (`rt_daemon`) |
 | Accounts | WP-CLI | `scripts/php/test-site.php`, run by the site's PHP for the time of the call |
-| Users menu of the row | Reads the project type | On DDEV it does not apply (the type is `php`): `cmd-tools-moodle-cli.sh --add-users`, or `cmd-tools-add-users.sh <name> moodle`. On another runtime the plugin's claim gives the row the list |
+| Users menu of the row | Reads the project type | Reads the plugin's claim (the type is `php`): `.ddev/config.moodle.yaml` on DDEV, `platform: moodle` in the `x-webship` block on another runtime |
 
 ## The commands
 
@@ -160,7 +160,7 @@ and was not run yet.
 
 | Runtime | The site's address | What the project carries |
 | --- | --- | --- |
-| DDEV | `https://mysite.ddev.site` | `.ddev/config.yaml` |
+| DDEV | `https://mysite.ddev.site` | `.ddev/config.yaml`, and the plugin's claim `.ddev/config.moodle.yaml` |
 | Docker Compose | `http://127.0.0.1:<port>`, printed by the build | `compose.yaml`, `.webship/runtime/Dockerfile` |
 | Kubernetes | `http://<node address>:<port>`, printed by the build | The same, and `k8s/` (the namespace `ws-mysite`) |
 | Lando | `http://127.0.0.1:<port>`, printed by the build | `.lando.yml` (Lando's proxy stays off) |
