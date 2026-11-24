@@ -240,8 +240,10 @@ function moodle_build() {
   ddev_up start -y || exit 1 ;
   root="$(moodle_container_root)" ;
 
-  # The release package of the line, unpacked in the web container, and the data folder beside it.
-  ddev exec "rm -rf ${root}/moodle /tmp/moodle && curl -fsSL '${package_url}' -o /tmp/moodle.tgz && tar -xzf /tmp/moodle.tgz -C /tmp && rm /tmp/moodle.tgz && mv /tmp/moodle ${root}/moodle && mkdir -p ${root}/moodledata" < /dev/null \
+  # The release package of the line, unpacked in the web container, and the data folder beside it. On another runtime
+  # the container's network may not be up the moment its start returns (seen on Docker Compose): the download is tried again.
+  local retry='' ; [ "${runtime}" != 'ddev' ] && retry='--retry 5 --retry-delay 3 --retry-all-errors ' ;
+  ddev exec "rm -rf ${root}/moodle /tmp/moodle && curl -fsSL ${retry}'${package_url}' -o /tmp/moodle.tgz && tar -xzf /tmp/moodle.tgz -C /tmp && rm /tmp/moodle.tgz && mv /tmp/moodle ${root}/moodle && mkdir -p ${root}/moodledata" < /dev/null \
     || { echo "The release package ${package_url} could not be fetched." ; exit 1 ; } ;
   if [ ! -f moodle/public/version.php ] ; then
     # A release before 5.1 has no public/ folder: it is served from moodle/.
