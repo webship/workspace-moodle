@@ -40,7 +40,7 @@ export function assistantContext(): string {
     '`bash cmd-moodle-project.sh <name> --install --add-users --test-course` from a sites folder (dev, test, sandboxes, demos),',
     'from the release package installed by its own command-line installer, in a container like every other project',
     '(DDEV project type php, the package in moodle/ served from moodle/public, its data folder moodledata/ beside it, cron running),',
-    'at https://<name>.ddev.site; `--moodle-version 4.5` builds the long-term support line before 5.3.',
+    'on DDEV by default, at https://<name>.ddev.site, or with `--runtime docker|podman|kubernetes|lando|docksal` on that runtime, at the address the build prints; `--moodle-version 4.5` builds the long-term support line before 5.3.',
     '`bash cmd-tools-moodle-cli.sh <name>` says what the site is; `--run "<script> <arguments>"` runs moodle/admin/cli/<script>.php in it,',
     '`--cron` runs cron, `--purge-caches` and `--upgrade` do what they say, `--test-course` makes the test course again,',
     '`--add-users` adds the default accounts (administrator, manager, teacher, student, student2).',

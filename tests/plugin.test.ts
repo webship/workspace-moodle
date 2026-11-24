@@ -57,7 +57,8 @@ test('the functions carry the names the core\'s tools look for, and build the si
   assert.match(src, /download\.moodle\.org\/download\.php\/direct\/stable\$\{branch\}\/moodle-latest-\$\{branch\}\.tgz/, 'the release package from the download site');
   assert.match(src, /admin\/cli\/install\.php --non-interactive --agree-license/, 'installed by its own command-line installer');
   assert.match(src, /--dbtype=mariadb --dbhost=db --dbname=db --dbuser=db --dbpass=db/, 'the database settings are the container\'s own values');
-  assert.match(src, /--dataroot=\/var\/www\/html\/moodledata/, 'the data folder beside the package, outside the web root');
+  // At the project's root in its container: /var/www/html on DDEV, the runtime's own elsewhere (moodle_container_root).
+  assert.match(src, /--dataroot=\$\{root\}\/moodledata/, 'the data folder beside the package, outside the web root');
   assert.match(src, /--adminuser="\$\{account_name\}" --adminpass="\$\{account_pass\}"/, 'the administrator is the workspace account');
   // An option every line's installer takes (4.5 has no --noreplyemail): the no-reply address is a setting after it.
   assert.doesNotMatch(src, /--noreplyemail/, 'the installer call carries no option the 4.5 installer lacks');
