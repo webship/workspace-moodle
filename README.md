@@ -72,6 +72,7 @@ Everything the builder runs for a site runs in the site's own container, through
 | `ai/prompts/moodle-build-and-test.md`, `moodle-scenarios-for-a-role.md` | Two prompts: whole launch commands for a new session |
 | `src/index.ts` | `register(api)`: what the assistant is told about Moodle here |
 | `features/moodle.feature` | Scenarios for the dashboard's own browser suite |
+| `features/moodle-runtimes.feature` | The row, the test users and two pages of a site built on Docker Compose and on Kubernetes |
 
 The `workspacePlugin` block in `package.json` is the manifest the installer reads.
 
@@ -84,12 +85,12 @@ only this:
 | --- | --- | --- |
 | Project | `--project-type=wordpress` | `--project-type=php --webserver-type=apache-fpm --docroot=moodle/public` (`moodle` for a release before 5.1), `--database=mariadb:11.4` (5.3 needs 11.4 or later), `max_input_vars = 5000` |
 | Layout | The site at the project root | The release package in `moodle/`, its data folder `moodledata/` beside it (outside the web root), the testing stack at the top: the package's own `package.json` is its development tooling and stays apart |
-| Recognised by | The DDEV project type | Its files: `moodle/public/version.php` (or `moodle/version.php`) |
+| Recognised by | The DDEV project type | Its files: `moodle/public/version.php` (or `moodle/version.php`); on another runtime than DDEV also the plugin's claim, `platform: moodle` in the `x-webship` block |
 | Getting the code | `wp core download` | The release package of the line (`--moodle-version`, 5.3 by default) from the project's download site, unpacked in the web container |
 | Install | `wp core install` | `admin/cli/install.php --non-interactive`, with the container's own database settings and the workspace account as the administrator |
-| Cron | WordPress's own | `admin/cli/cron.php` again and again, run by the web container's process supervisor (`web_extra_daemons`) |
+| Cron | WordPress's own | `admin/cli/cron.php` again and again, run by the web container's process supervisor (`web_extra_daemons`); on another runtime kept running beside the web server by the core's layer (`rt_daemon`) |
 | Accounts | WP-CLI | `scripts/php/test-site.php`, run by the site's PHP for the time of the call |
-| Users menu of the row | Reads the project type | Does not apply (the type is `php`): `cmd-tools-moodle-cli.sh --add-users`, or `cmd-tools-add-users.sh <name> moodle` |
+| Users menu of the row | Reads the project type | On DDEV it does not apply (the type is `php`): `cmd-tools-moodle-cli.sh --add-users`, or `cmd-tools-add-users.sh <name> moodle`. On another runtime the plugin's claim gives the row the list |
 
 ## The commands
 
@@ -109,14 +110,73 @@ bash cmd-moodle-project.sh mysite --install --add-users --test-course
 | `--add-users` | With `--install`: add the default accounts |
 | `--moodle-version <x>` | The release line: 5.3 (the default, the current release and a long-term support line), 5.2, 5.1, 5.0 or 4.5 (the long-term support line before it) |
 | `--php-version <x>` | The PHP of the project container: 8.3 (the default) or 8.4 |
+| `--runtime <name>` | The container runtime to build on: `ddev` (the default), `docker`, `kubernetes`, `podman`, `lando` or `docksal`. See [Runtimes](#runtimes) |
 | `--launch` | Open the login page when the site is ready |
 
-The site answers at `https://mysite.ddev.site`, its login at `/login/index.php`. The build runs
+On DDEV the site answers at `https://mysite.ddev.site`, its login at `/login/index.php`. The build runs
 `ddev config --project-type=php` with Apache, MariaDB 11.4 and the Node.js of the workspace (24),
 fetches the release package of the line in the web container and unpacks it in `moodle/`, keeps the
 data folder `moodledata/` beside it, starts cron, and with `--install` runs the installer. A project of
 the same name is deleted first. A new site of the 5.x line asks every visitor to log in, and turns My
 courses off (the Dashboard carries the course overview): both are the release's own defaults.
+
+
+### Runtimes
+
+```bash
+bash cmd-moodle-project.sh mysite --install --add-users --test-course                        # DDEV, the default
+bash cmd-moodle-project.sh mysite --install --add-users --test-course --runtime docker       # Docker Compose
+bash cmd-moodle-project.sh mysite --install --add-users --test-course --runtime kubernetes   # a Kubernetes cluster
+bash cmd-moodle-project.sh mysite --install --add-users --test-course --runtime lando        # Lando
+bash cmd-moodle-project.sh mysite --install --add-users --test-course --runtime docksal      # Docksal
+```
+
+Without `--runtime` a build takes `container.runtime` of the workspace's `settings.yml`, then DDEV.
+It needs a Webship Workspace with the container runtimes
+([webship/workspace#694](https://github.com/webship/workspace/issues/694)); on an older one the
+builder refuses `--runtime` and builds on DDEV only. Lando and Docksal need a Workspace whose runtime
+layer has them ([webship/workspace#729](https://github.com/webship/workspace/issues/729),
+[#730](https://github.com/webship/workspace/issues/730)). Moodle also needs a layer that takes a
+project's PHP settings and its cron ([#825](https://github.com/webship/workspace/issues/825), and
+[#836](https://github.com/webship/workspace/issues/836) on Lando and Docksal), and gives MariaDB 11.4 the
+collation Moodle's installer takes ([#827](https://github.com/webship/workspace/issues/827)); without
+the first the builder says so and builds on DDEV only.
+
+| | DDEV | Docker Compose | Kubernetes | Podman | Lando | Docksal |
+| --- | --- | --- | --- | --- | --- | --- |
+| Build with `--install --add-users --test-course` (MariaDB 11.4) | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| The pages, and a login as the workspace account, a teacher and a student (refused the administration) | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| `cmd-tools-moodle-cli.sh`: the release, cron's last line and the accounts, `--run`, `--purge-caches` | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| Cron, kept running beside the web server | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| Test users, cancelled and added | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| Mail caught by Mailpit (the site's own notices, sent by its cron) | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| The testing setup and the first feature | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| The step pack's examples | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| Export and import the database | Yes | Yes | Yes | Not yet run | Yes | Yes |
+| The row in the dashboard, and remove | Yes | Yes | Yes | Not yet run | Yes | Yes |
+
+"Yes" means it was run on a real site of that runtime. Podman runs the same code as Docker Compose
+and was not run yet.
+
+| Runtime | The site's address | What the project carries |
+| --- | --- | --- |
+| DDEV | `https://mysite.ddev.site` | `.ddev/config.yaml` |
+| Docker Compose | `http://127.0.0.1:<port>`, printed by the build | `compose.yaml`, `.webship/runtime/Dockerfile` |
+| Kubernetes | `http://<node address>:<port>`, printed by the build | The same, and `k8s/` (the namespace `ws-mysite`) |
+| Lando | `http://127.0.0.1:<port>`, printed by the build | `.lando.yml` (Lando's proxy stays off) |
+| Docksal | `http://mysite.docksal.site`, on Docksal's own proxy | `.docksal/docksal.env`, `.docksal/docksal.yml` |
+
+What differs on Docker Compose, Kubernetes, Lando and Docksal:
+
+- **The claim:** the type `php` names no platform, so the build claims the project for the plugin (`platform: moodle` in the `x-webship` block, the core's `rt_claim`): the console tool, the test users, the testing setup and the row's Tests menu know the site by it.
+- **`max_input_vars = 5000` and cron** through the core's layer (webship/workspace#825): the setting in `.webship/php/moodle.ini` (`rt_php_ini`), which the web server and the command line read; cron, DDEV's own loop from the project's folder, kept running beside the web server (`rt_daemon`), its log in `.webship/moodle-cron.log`, which the console tool reads.
+- **Where the project is in its container** (`/var/www/html`, `/app` on Lando, `/var/www` on Docksal) is asked of the container, for the package, the data folder, the installer and the test-site script.
+- **MariaDB 11.4** with the collation DDEV gives it (webship/workspace#827), which Moodle's installer takes.
+- **HTTPS and a host name** are DDEV's: a runtime's address is plain HTTP.
+
+The same commands work on every runtime: `cmd-tools-moodle-cli.sh`, `cmd-tools-add-users.sh`,
+`cmd-tools-testing.sh`. The pattern is the Workspace's
+[`core/docs/plugins-on-runtimes.md`](https://github.com/webship/workspace/blob/1.0.x/core/docs/plugins-on-runtimes.md).
 
 ### Work on a site
 
