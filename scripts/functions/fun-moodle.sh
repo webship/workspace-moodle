@@ -6,7 +6,11 @@
 #
 # Placed by `plugins.sh --install moodle` in core/scripts/plugins/moodle/functions/, where bootstrap
 # sources it after the core's own functions. Everything runs in the project's container (DDEV by
-# default: `ddev exec php moodle/admin/cli/…`), never on the host. DDEV has no project type of its own
+# default: `ddev exec php moodle/admin/cli/…`), never on the host. On another runtime than DDEV (--runtime: Docker
+# Compose, Podman, Kubernetes, Lando, Docksal) the same `ddev <verb>` calls go through the core's runtime layer;
+# what differs is behind moodle_runtime: the address (moodle_url), where the project is in its container
+# (moodle_container_root), the claim of the plugin (rt_claim, as the type php names no platform), and the PHP
+# setting and the cron, through the layer (rt_php_ini, rt_daemon) instead of DDEV's own files. DDEV has no project type of its own
 # for Moodle: a project is of type php, and the plugin knows it by its files (moodle/version.php, or
 # moodle/public/version.php from 5.1 on). The release package sits in moodle/ and its data folder
 # moodledata/ beside it, outside the web root; the top of the project stays free for the testing setup
@@ -54,10 +58,38 @@ function set_moodle_users() {
   user_student2_role='' ;
 }
 
-# Is this folder a Moodle project? A container project with the release package in moodle/.
+# The runtime of the project in this folder, or of a new build (--runtime, else the workspace's
+# setting, else DDEV). A core without the runtime layer has DDEV only.
+function moodle_runtime() {
+  if declare -f runtime_of > /dev/null ; then runtime_of ; else echo 'ddev' ; fi
+}
+
+# The address of the site in this folder: https://<name>.ddev.site on DDEV, http://127.0.0.1:<port> on
+# Docker Compose, Podman and Lando, the node's address and a port on Kubernetes, http://<name>.docksal.site
+# on Docksal. Asked after `ddev config`.
+function moodle_url() {
+  if declare -f rt_url > /dev/null ; then rt_url ; else echo "https://${PROJECT_NAME}.ddev.site" ; fi
+}
+
+# Where the project is in its web container: /var/www/html on DDEV (nothing is asked), else the container
+# is asked (/var/www/html on Docker Compose, Podman and Kubernetes, /app on Lando, /var/www on Docksal).
+function moodle_container_root() {
+  if [ "$(moodle_runtime)" == 'ddev' ] ; then echo '/var/www/html' ; return 0 ; fi
+  [ -n "${MOODLE_CONTAINER_ROOT:-}" ] || MOODLE_CONTAINER_ROOT="$(ddev exec pwd 2>/dev/null | tr -d '\r' | tail -1)" ;
+  echo "${MOODLE_CONTAINER_ROOT:-/var/www/html}" ;
+}
+
+# Cron on another runtime than DDEV: the same loop as DDEV's cron.sh, kept running beside the web server by
+# the core's layer (rt_daemon), from the project's folder, its log in the project (.webship/moodle-cron.log).
+readonly MOODLE_RUNTIME_CRON='cd "$(dirname "$0")/../.." && while true ; do if [ -f moodle/config.php ] ; then php moodle/admin/cli/cron.php --keep-alive=60 >> .webship/moodle-cron.log 2>&1 || sleep 10 ; else sleep 10 ; fi ; done' ;
+
+# Is this folder a Moodle project? A container project with the release package in moodle/: a DDEV
+# project, or one of another runtime the plugin claims (the core's rt_is_platform reads the claim).
 function moodle_is_project() {
   local project_path="$1";
-  [ -f "${project_path}/.ddev/config.yaml" ] || return 1 ;
+  if [ ! -f "${project_path}/.ddev/config.yaml" ] ; then
+    declare -f rt_is_platform > /dev/null && rt_is_platform "${project_path}" moodle || return 1 ;
+  fi
   local version="${project_path}/moodle/public/version.php" ;
   [ -f "${version}" ] || version="${project_path}/moodle/version.php" ;
   [ -f "${version}" ] && grep -q '\$release' "${version}" 2>/dev/null ;
@@ -119,7 +151,8 @@ function moodle_test_site() {
     return 1 ;
   fi
   cp "${MOODLE_TEST_SITE_PHP}" .webship-test-site.php || return 1 ;
-  ddev exec php /var/www/html/.webship-test-site.php --config=/var/www/html/moodle/config.php "$@" < /dev/null ;
+  local root ; root="$(moodle_container_root)" ;
+  ddev exec php ${root}/.webship-test-site.php --config=${root}/moodle/config.php "$@" < /dev/null ;
   local rc=$? ;
   rm -f .webship-test-site.php ;
   return ${rc} ;
@@ -150,9 +183,9 @@ for r in rows:
 print(json.dumps(accounts))' > .webship-test-accounts.json || return 1 ;
   local rc=0 ;
   if [ "${action}" == 'delete' ] ; then
-    moodle_test_site --delete-accounts=/var/www/html/.webship-test-accounts.json || rc=$? ;
+    moodle_test_site --delete-accounts=$(moodle_container_root)/.webship-test-accounts.json || rc=$? ;
   else
-    moodle_test_site --accounts=/var/www/html/.webship-test-accounts.json || rc=$? ;
+    moodle_test_site --accounts=$(moodle_container_root)/.webship-test-accounts.json || rc=$? ;
   fi
   rm -f .webship-test-accounts.json ;
   return ${rc} ;
@@ -163,7 +196,16 @@ print(json.dumps(accounts))' > .webship-test-accounts.json || return 1 ;
 # account as its administrator; --test-course and --add-users write the test site.
 function moodle_build() {
   trim_project_name ;
-  local base_url="https://${PROJECT_NAME}.ddev.site" ;
+  local base_url runtime root ;
+  runtime="$(moodle_runtime)" ;
+  if [ "${RUNTIME:-_none_}" != '_none_' ] && [ "${RUNTIME}" != "${runtime}" ] ; then
+    echo "--runtime ${RUNTIME} needs a Webship Workspace with the container runtimes (webship/workspace#694): update the workspace, or build on DDEV." ;
+    exit 1 ;
+  fi
+  if [ "${runtime}" != 'ddev' ] && ! declare -f rt_daemon > /dev/null ; then
+    echo "Moodle on ${runtime} needs a Webship Workspace whose runtimes take a project's PHP settings and its cron (webship/workspace#825): update the workspace, or build on DDEV." ;
+    exit 1 ;
+  fi
   local php_version="${PHP_VERSION:-${site_php_version:-8.3}}" ;
   local line="${MOODLE_VERSION:-5.3}" ;
   local branch ; branch="$(moodle_branch "${line}")" ;
@@ -182,13 +224,24 @@ function moodle_build() {
   # with the database the release needs (5.3: MariaDB 11.4 or later).
   ddev config --project-type=php --docroot=moodle/public --webserver-type=apache-fpm --project-name=${PROJECT_NAME} \
     --database="${database}" --nodejs-version=$(ddev_nodejs_version) --php-version="${php_version}" --auto || exit 1 ;
-  mkdir -p .ddev/php ;
-  printf 'max_input_vars = 5000\n' > .ddev/php/moodle.ini ;
-  moodle_write_cron ;
+  if [ "${runtime}" == 'ddev' ] ; then
+    mkdir -p .ddev/php ;
+    printf 'max_input_vars = 5000\n' > .ddev/php/moodle.ini ;
+    moodle_write_cron ;
+  else
+    # The type php says nothing of the platform: the plugin claims the project, so the tools and the dashboard
+    # know it. Its PHP setting and its cron through the core's layer (webship/workspace#825).
+    rt_claim moodle || exit 1 ;
+    printf 'max_input_vars = 5000\n' | rt_php_ini moodle || exit 1 ;
+    rt_daemon cron "${MOODLE_RUNTIME_CRON}" || exit 1 ;
+  fi
+  # The address is the runtime's to say, once the project is configured: never a written ddev.site.
+  base_url="$(moodle_url)" ;
   ddev_up start -y || exit 1 ;
+  root="$(moodle_container_root)" ;
 
   # The release package of the line, unpacked in the web container, and the data folder beside it.
-  ddev exec "rm -rf /var/www/html/moodle /tmp/moodle && curl -fsSL '${package_url}' -o /tmp/moodle.tgz && tar -xzf /tmp/moodle.tgz -C /tmp && rm /tmp/moodle.tgz && mv /tmp/moodle /var/www/html/moodle && mkdir -p /var/www/html/moodledata" < /dev/null \
+  ddev exec "rm -rf ${root}/moodle /tmp/moodle && curl -fsSL '${package_url}' -o /tmp/moodle.tgz && tar -xzf /tmp/moodle.tgz -C /tmp && rm /tmp/moodle.tgz && mv /tmp/moodle ${root}/moodle && mkdir -p ${root}/moodledata" < /dev/null \
     || { echo "The release package ${package_url} could not be fetched." ; exit 1 ; } ;
   if [ ! -f moodle/public/version.php ] ; then
     # A release before 5.1 has no public/ folder: it is served from moodle/.
@@ -198,15 +251,15 @@ function moodle_build() {
 
   if [ "${INSTALL}" == 'yes' ] ; then
     # The release's own installer: moodle/config.php, the database, and the workspace account as the administrator.
-    ddev exec php /var/www/html/moodle/admin/cli/install.php --non-interactive --agree-license --lang=en \
-      --wwwroot="${base_url}" --dataroot=/var/www/html/moodledata \
+    ddev exec php ${root}/moodle/admin/cli/install.php --non-interactive --agree-license --lang=en \
+      --wwwroot="${base_url}" --dataroot=${root}/moodledata \
       --dbtype=mariadb --dbhost=db --dbname=db --dbuser=db --dbpass=db --prefix=mdl_ \
       --fullname="${doc_name} ${PROJECT_NAME}" --shortname="${PROJECT_NAME}" \
       --adminuser="${account_name}" --adminpass="${account_pass}" --adminemail="${account_mail}" \
       --supportemail=support@example.com < /dev/null \
       || { echo "The installer failed." ; exit 1 ; } ;
     # The no-reply address through the site's own settings tool: the installer of the 4.5 line has no option for it.
-    ddev exec php /var/www/html/moodle/admin/cli/cfg.php --name=noreplyaddress --set=noreply@example.com < /dev/null ;
+    ddev exec php ${root}/moodle/admin/cli/cfg.php --name=noreplyaddress --set=noreply@example.com < /dev/null ;
     if [ "${TEST_COURSE}" == 'yes' ] ; then
       moodle_test_site --settings --course || { echo "The test course could not be written." ; exit 1 ; } ;
     fi
@@ -216,13 +269,13 @@ function moodle_build() {
       cd ${WORKSPACE_ROOT}/${doc_name}/${PROJECT_NAME} || exit 1 ;
     fi
     # The first cron run, so that the scheduled tasks of a new site have run once.
-    ddev exec php /var/www/html/moodle/admin/cli/cron.php < /dev/null > /dev/null 2>&1 ;
+    ddev exec php ${root}/moodle/admin/cli/cron.php < /dev/null > /dev/null 2>&1 ;
   elif [ "${ADD_USERS}" == 'yes' ] || [ "${TEST_COURSE}" == 'yes' ] ; then
     echo "--add-users and --test-course need --install: there is no site to add them to yet." ;
   fi
 
   local release ;
-  release="$(ddev exec php /var/www/html/moodle/admin/cli/cfg.php --name=release < /dev/null 2>/dev/null)" ;
+  release="$(ddev exec php ${root}/moodle/admin/cli/cfg.php --name=release < /dev/null 2>/dev/null)" ;
   if [ "${INSTALL}" == 'yes' ] ; then
     echo "${doc_name} ${PROJECT_NAME} has been installed: Moodle ${release}.";
     echo "Go to ${base_url}/login/index.php and log in as ${account_name}";
@@ -300,16 +353,16 @@ function moodle_cli_tool() {
       echo "moodle/admin/cli/${script}.php does not exist. The scripts: $(ls moodle/admin/cli | sed 's/\.php$//' | tr '\n' ' ')" ;
       exit 1 ;
     fi
-    ddev exec php /var/www/html/moodle/admin/cli/${script}.php ${rest} < /dev/null ;
+    ddev exec php $(moodle_container_root)/moodle/admin/cli/${script}.php ${rest} < /dev/null ;
     exit $? ;
   fi
 
   if [ "${CRON}" == 'yes' ] ; then
-    ddev exec php /var/www/html/moodle/admin/cli/cron.php < /dev/null ;
+    ddev exec php $(moodle_container_root)/moodle/admin/cli/cron.php < /dev/null ;
   elif [ "${PURGE_CACHES}" == 'yes' ] ; then
-    ddev exec php /var/www/html/moodle/admin/cli/purge_caches.php < /dev/null ;
+    ddev exec php $(moodle_container_root)/moodle/admin/cli/purge_caches.php < /dev/null ;
   elif [ "${UPGRADE}" == 'yes' ] ; then
-    ddev exec php /var/www/html/moodle/admin/cli/upgrade.php --non-interactive < /dev/null ;
+    ddev exec php $(moodle_container_root)/moodle/admin/cli/upgrade.php --non-interactive < /dev/null ;
   elif [ "${TEST_COURSE}" == 'yes' ] ; then
     moodle_test_site --settings --course ;
     set_moodle_users ;
@@ -321,8 +374,13 @@ function moodle_cli_tool() {
     set_moodle_users ;
     cancel_moodle_users ;
   else
-    echo "${doc_name}/${PROJECT_NAME}: Moodle $(ddev exec php /var/www/html/moodle/admin/cli/cfg.php --name=release < /dev/null 2>/dev/null) at https://${PROJECT_NAME}.ddev.site" ;
-    echo "  Cron: $(ddev exec 'tail -n 1 /tmp/cron.log' < /dev/null 2>/dev/null || echo 'not run yet')" ;
+    echo "${doc_name}/${PROJECT_NAME}: Moodle $(ddev exec php $(moodle_container_root)/moodle/admin/cli/cfg.php --name=release < /dev/null 2>/dev/null) at $(moodle_url)" ;
+    # Cron's last line: in the web container on DDEV, in the project's folder on another runtime (rt_daemon).
+    if [ "$(moodle_runtime)" == 'ddev' ] ; then
+      echo "  Cron: $(ddev exec 'tail -n 1 /tmp/cron.log' < /dev/null 2>/dev/null || echo 'not run yet')" ;
+    else
+      echo "  Cron: $(tail -n 1 .webship/moodle-cron.log 2>/dev/null || echo 'not run yet')" ;
+    fi
     echo "" ; echo "Accounts:" ;
     moodle_test_site --list-accounts ;
   fi

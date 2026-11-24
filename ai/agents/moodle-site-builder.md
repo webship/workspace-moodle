@@ -39,7 +39,7 @@ bash cmd-moodle-project.sh mysite --install --add-users --test-course
 | `--php-version <x>` | The PHP of the project container (8.3 by default). |
 | `--launch` | Opens the login page when the site is ready. |
 
-The site answers at `https://<name>.ddev.site`, its login at `/login/index.php`. The build makes a
+On DDEV the site answers at `https://<name>.ddev.site`, its login at `/login/index.php`. With `--runtime docker`, `podman`, `kubernetes`, `lando` or `docksal` it is built on that runtime instead, at the address the build prints (`http://127.0.0.1:<port>`, the node's address and a port, or `http://<name>.docksal.site`): never write a `ddev.site` address for such a site. Its mailbox is at the address `rt_mail_url` gives, and the same commands work on it. The build makes a
 container project of type `php` (Apache, MariaDB 11.4 — 5.3 needs 11.4 or later — and the Node.js of
 the workspace, 24), unpacks the release package in `moodle/` in the web container, serves it from
 `moodle/public` (`moodle/` for a release before 5.1), keeps its data folder `moodledata/` beside it,

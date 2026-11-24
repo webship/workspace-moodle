@@ -166,3 +166,104 @@ test('the first feature names no platform in a step, and no password', () => {
   assert.doesNotMatch(feature, /password "(?!wrong)/);
   assert.doesNotMatch(feature, /create_user|user_create|signup/i, 'a suite never creates an account');
 });
+
+// ---- The runtimes: DDEV as before, and Docker Compose, Podman, Kubernetes, Lando and Docksal through the core's layer ----
+
+const ADDRESSES: Record<string, string> = {
+  docker: 'http://127.0.0.1:41234', podman: 'http://127.0.0.1:41234', lando: 'http://127.0.0.1:41234',
+  kubernetes: 'http://172.18.0.2:30080', docksal: 'http://site1.docksal.site',
+};
+// Where each runtime keeps the project in its container: what `ddev exec pwd` answers from the project folder.
+const ROOTS: Record<string, string> = { docker: '/var/www/html', podman: '/var/www/html', kubernetes: '/var/www/html', lando: '/app', docksal: '/var/www' };
+
+/**
+ * The builder in a throwaway workspace, with `ddev` replaced by a recorder (which unpacks a release package where
+ * the download goes, and answers `ddev exec pwd` with the runtime's root), and the core's layer by stand-ins: `layer`
+ * is the runtime it answers with (runtime_of, rt_url, rt_claim, rt_php_ini, rt_daemon), or '' for a core with no layer.
+ */
+function build(layer: string, env: Record<string, string> = {}, { daemons = true } = {}) {
+  const p = project('moodle');
+  fs.rmSync(p.dir, { recursive: true });
+  const log = path.join(p.root, 'ddev.log');
+  const address = ADDRESSES[layer] || '';
+  const prelude = [
+    `ddev() { echo "ddev $*" >> "${log}" ; [ "$*" == "exec pwd" ] && echo "${ROOTS[layer] || '/var/www/html'}" ; case "$*" in *"tar -xzf"*) mkdir -p moodle/public && printf '<?php\\n$release = "5.3.1";\\n' > moodle/public/version.php ;; esac ; [ -t 0 ] || cat > /dev/null ; return 0 ; }`,
+    'trim_project_name() { :; } ; drop_database() { :; } ; ddev_nodejs_version() { echo 24 ; } ; ddev_up() { ddev "$@" ; }',
+    layer ? `runtime_of() { echo "\${RUNTIME_ANSWER}" ; } ; rt_url() { [ "\${RUNTIME_ANSWER}" == ddev ] && echo "https://\${PROJECT_NAME}.ddev.site" || echo "${address}" ; } ; rt_claim() { echo "rt_claim $* in $(basename "$PWD")" >> "${log}" ; } ; rt_php_ini() { echo "rt_php_ini $* <<< $(cat)" >> "${log}" ; }` : '',
+    layer && daemons ? `rt_daemon() { echo "rt_daemon $1 [$2]" >> "${log}" ; }` : '',
+    `source ${FUNCTIONS}`,
+    'moodle_build',
+  ].join('\n');
+  const r = spawnSync('bash', ['-c', prelude], { encoding: 'utf8', env: { ...process.env, WORKSPACE_ROOT: p.root, WORKSPACE_SCRIPTS: p.scripts, doc_name: 'dev', PROJECT_NAME: 'site1',
+    INSTALL: 'yes', ADD_USERS: 'no', TEST_COURSE: 'no', LAUNCH: 'no', MOODLE_VERSION: '5.3', PHP_VERSION: '8.3',
+    RUNTIME: '_none_', RUNTIME_ANSWER: layer || 'ddev', account_name: 'webmaster', account_pass: 'Change_Me.123123', account_mail: 'webmaster@example.com', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'] });
+  const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter((c) => /^(ddev|rt_claim|rt_php_ini|rt_daemon) /.test(c)) : [];
+  return { r, calls, dir: path.join(p.root, 'dev', 'site1') };
+}
+
+test('on DDEV the build is what it was: the same commands with the layer and without it, its PHP setting and its cron in .ddev/', () => {
+  const without = build('');
+  const withLayer = build('ddev');
+  for (const b of [without, withLayer]) {
+    assert.strictEqual(b.r.status, 0, b.r.stderr + b.r.stdout);
+    assert.match(b.r.stdout, /Go to https:\/\/site1\.ddev\.site\/login\/index\.php and log in as webmaster/);
+    assert.strictEqual(fs.readFileSync(path.join(b.dir, '.ddev', 'php', 'moodle.ini'), 'utf8'), 'max_input_vars = 5000\n');
+    assert.match(fs.readFileSync(path.join(b.dir, '.ddev', 'config.cron.yaml'), 'utf8'), /web_extra_daemons:\n {2}- name: "cron"\n {4}command: "bash \/var\/www\/html\/\.ddev\/cron\.sh"/);
+  }
+  assert.deepStrictEqual(withLayer.calls, without.calls);
+  const install = without.calls.find((c) => c.includes('admin/cli/install.php'));
+  assert.ok(install && install.startsWith('ddev exec php /var/www/html/moodle/admin/cli/install.php '), install);
+  assert.match(install, / --wwwroot=https:\/\/site1\.ddev\.site --dataroot=\/var\/www\/html\/moodledata /);
+  assert.ok(!without.calls.includes('ddev exec pwd'), 'DDEV is not asked where the project is');
+  assert.ok(!withLayer.calls.some((c) => /^rt_(claim|php_ini|daemon) /.test(c)), 'nothing through the layer on DDEV');
+});
+
+test('on Docker Compose, Podman, Kubernetes, Lando and Docksal the plugin claims the site, gives the layer its PHP setting and its cron, and installs it at the runtime\'s address and root', () => {
+  for (const runtime of Object.keys(ADDRESSES)) {
+    const address = ADDRESSES[runtime];
+    const root = ROOTS[runtime];
+    const b = build(runtime, { RUNTIME: runtime });
+    assert.strictEqual(b.r.status, 0, runtime + ': ' + b.r.stderr + b.r.stdout);
+    assert.deepStrictEqual(b.calls.slice(0, 4).map((c) => c.split(' --')[0].split(' [')[0]), ['ddev config', 'rt_claim moodle in site1', 'rt_php_ini moodle <<< max_input_vars = 5000', 'rt_daemon cron'], runtime);
+    const cron = b.calls.find((c) => c.startsWith("rt_daemon cron")) || "";
+    assert.match(cron, /\[cd "\$\(dirname "\$0"\)\/\.\.\/\.\." && while true ; do if \[ -f moodle\/config\.php \] ; then php moodle\/admin\/cli\/cron\.php --keep-alive=60 >> \.webship\/moodle-cron\.log 2>&1 \|\| sleep 10 ; else sleep 10 ; fi ; done\]/, `${runtime}: DDEV's loop, from the project's folder`);
+    assert.ok(b.calls.some((c) => c.includes(`mv /tmp/moodle ${root}/moodle && mkdir -p ${root}/moodledata`)), `${runtime}: the code at the runtime's root`);
+    const install = b.calls.find((c) => c.includes('admin/cli/install.php'));
+    assert.ok(install && install.startsWith(`ddev exec php ${root}/moodle/admin/cli/install.php `), `${runtime}: ${install}`);
+    assert.ok(install.includes(` --wwwroot=${address} --dataroot=${root}/moodledata `), `${runtime}: ${install}`);
+    assert.ok(!fs.existsSync(path.join(b.dir, '.ddev')), `${runtime}: nothing of DDEV's is written`);
+    assert.match(b.r.stdout, new RegExp(`Go to ${address.replace(/[.]/g, '\\.')}/login/index\\.php and log in as webmaster`), runtime);
+    assert.doesNotMatch(b.r.stdout, /ddev\.site/, runtime);
+  }
+});
+
+test('--runtime is refused, before anything is made, on a workspace without the layer, or whose layer has no place for the setting and the cron', () => {
+  const none = build('', { RUNTIME: 'docker' });
+  assert.strictEqual(none.r.status, 1);
+  assert.match(none.r.stdout, /--runtime docker needs a Webship Workspace with the container runtimes \(webship\/workspace#694\)/);
+  assert.deepStrictEqual(none.calls, []);
+  const older = build('docker', { RUNTIME: 'docker' }, { daemons: false });
+  assert.strictEqual(older.r.status, 1);
+  assert.match(older.r.stdout, /Moodle on docker needs a Webship Workspace whose runtimes take a project's PHP settings and its cron \(webship\/workspace#825\)/);
+  assert.deepStrictEqual(older.calls, []);
+});
+
+test('the builder takes --runtime, with the runtimes of the core\'s own builders', () => {
+  const args = fs.readFileSync(path.join(PKG, 'scripts', 'args', 'arg-moodle.sh'), 'utf8');
+  assert.match(args, /parser\.add_argument\('--runtime',\s*dest='RUNTIME',\s*default="_none_",\s*choices=\['ddev', 'docker', 'podman', 'kubernetes', 'lando', 'docksal'\]/);
+});
+
+test('a site is known on every runtime: the claim through the core\'s layer; the tools run at the runtime\'s root', () => {
+  const p = project('moodle');
+  fs.rmSync(path.join(p.dir, '.ddev'), { recursive: true });
+  fs.writeFileSync(path.join(p.dir, 'compose.yaml'), 'x-webship:\n  platform: moodle\n  runtime: lando\n  type: php\n');
+  const layer = 'rt_is_platform() { grep -q "^  platform: $2$" "$1/compose.yaml" 2>/dev/null ; } ; runtime_of() { echo lando ; } ; rt_url() { echo http://127.0.0.1:41234 ; } ; ';
+  assert.strictEqual(bash(`${layer} moodle_is_project ${p.dir}`).status, 0, 'claimed');
+  assert.strictEqual(bash(`moodle_is_project ${p.dir}`).status, 1, 'without the layer, nothing claims it');
+  const log = path.join(p.root, 'ddev.log');
+  const r = bash(`${layer} ddev() { echo "ddev $*" >> "${log}" ; [ "$*" == "exec pwd" ] && echo /app ; [ "$1" == describe ] && echo '{"raw":{"status":"running"}}' ; return 0 ; } ; RUN=_none_ CRON=yes moodle_cli_tool`,
+    { WORKSPACE_ROOT: p.root, WORKSPACE_SCRIPTS: p.scripts, doc_name: 'dev', PROJECT_NAME: 'site1' });
+  assert.strictEqual(r.status, 0, r.stderr + r.stdout);
+  assert.match(fs.readFileSync(log, 'utf8'), /^ddev exec php \/app\/moodle\/admin\/cli\/cron\.php$/m, 'Lando keeps the project at /app');
+});

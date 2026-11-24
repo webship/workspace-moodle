@@ -4,7 +4,8 @@
 
 # Installed by the Moodle plugin (plugins.sh --install moodle); __WORKSPACE__ is the workspace it was installed into.
 #
-# Build a Moodle learning site in a container from the release package, at https://<name>.ddev.site
+# Build a Moodle learning site in a container from the release package, on DDEV (the default) at
+# https://<name>.ddev.site, or with --runtime docker, podman, kubernetes, lando or docksal at the address the build prints
 # (DDEV project type php, the package in moodle/ served from moodle/public, its data folder beside it,
 # cron running in the web container). With --install the release's own command-line installer sets it up
 # with the workspace account as its administrator; --test-course adds the test course the step pack's
