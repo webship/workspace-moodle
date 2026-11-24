@@ -267,3 +267,16 @@ test('a site is known on every runtime: the claim through the core\'s layer; the
   assert.strictEqual(r.status, 0, r.stderr + r.stdout);
   assert.match(fs.readFileSync(log, 'utf8'), /^ddev exec php \/app\/moodle\/admin\/cli\/cron\.php$/m, 'Lando keeps the project at /app');
 });
+
+test('the feature of the runtimes drives a site the plugin claims, and names no platform in a step', () => {
+  const feature = fs.readFileSync(path.join(PKG, 'features', 'moodle-runtimes.feature'), 'utf8');
+  const scenarios = feature.split(/\n(?=  @needs-runtime-)/).slice(1);
+  assert.strictEqual(scenarios.length, 6);
+  for (const s of scenarios) assert.match(s, /^  @needs-runtime-(docker|kubernetes) @needs-platform-moodle\n  Scenario: /);
+  const steps = feature.split('\n').filter((l) => /^\s*(Given|When|Then|And|But) /.test(l));
+  for (const s of steps) assert.doesNotMatch(s, /moodle/i, s);
+  assert.doesNotMatch(feature, /ddev\.site|127\.0\.0\.1/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')).workspacePlugin;
+  assert.ok(manifest.features.includes('features/moodle-runtimes.feature'));
+  assert.match(manifest.featuresSite, /^cmd-moodle-project\.sh ci-moodle( [A-Za-z0-9._=-]+)* --runtime docker$/);
+});

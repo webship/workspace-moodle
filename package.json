@@ -87,8 +87,10 @@
       ]
     },
     "features": [
-      "features/moodle.feature"
-    ]
+      "features/moodle.feature",
+      "features/moodle-runtimes.feature"
+    ],
+    "featuresSite": "cmd-moodle-project.sh ci-moodle --install --add-users --test-course --runtime docker"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
