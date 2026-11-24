@@ -210,6 +210,11 @@ test('on DDEV the build is what it was: the same commands with the layer and wit
     assert.match(b.r.stdout, /Go to https:\/\/site1\.ddev\.site\/login\/index\.php and log in as webmaster/);
     assert.strictEqual(fs.readFileSync(path.join(b.dir, '.ddev', 'php', 'moodle.ini'), 'utf8'), 'max_input_vars = 5000\n');
     assert.match(fs.readFileSync(path.join(b.dir, '.ddev', 'config.cron.yaml'), 'utf8'), /web_extra_daemons:\n {2}- name: "cron"\n {4}command: "bash \/var\/www\/html\/\.ddev\/cron\.sh"/);
+    // The plugin's claim (#8): an overlay with one key nothing of the site reads; the dashboard takes the name between
+    // "config." and ".yaml", and finds the list of the same name (set_moodle_users).
+    const claim = fs.readFileSync(path.join(b.dir, '.ddev', 'config.moodle.yaml'), 'utf8');
+    assert.deepStrictEqual(claim.split('\n').filter((l) => /^[a-z_]+:/.test(l)), ['web_environment:']);
+    assert.match(claim, /^web_environment:\n {2}- WEBSHIP_WORKSPACE_PLATFORM=moodle\n$/m);
   }
   assert.deepStrictEqual(withLayer.calls, without.calls);
   const install = without.calls.find((c) => c.includes('admin/cli/install.php'));

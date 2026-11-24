@@ -121,6 +121,22 @@ function moodle_branch() {
   printf '%d%02d' "${major}" "${minor}" ;
 }
 
+# The claim of this plugin on a DDEV project, in the folder of the container tool: a config overlay with one key the
+# site does not read, the name of the platform the project was built as. The type php names no platform; the
+# dashboard reads the file's name, and a project that carries config.<plugin>.yaml takes that plugin's test users.
+function moodle_write_claim() {
+  mkdir -p .ddev || return 1 ;
+  cat > .ddev/config.moodle.yaml <<'YAMLEOF'
+# Written by the Moodle plugin of the Webship Workspace (cmd-moodle-project.sh).
+#
+# It is the plugin's claim on this project: the project type php names no platform, so the workspace's tools and its
+# dashboard read this file to know the site, and take its test users for it (cmd-tools-add-users.sh <project> moodle).
+# The key below is in the environment of the web container from its next start; nothing of the site reads it.
+web_environment:
+  - WEBSHIP_WORKSPACE_PLATFORM=moodle
+YAMLEOF
+}
+
 # Cron for the site, the way it asks for it: admin/cli/cron.php again and again in the web container, run
 # by the container's own process supervisor. Each run keeps polling for new tasks for a minute; a run that
 # cannot start yet (no site, an install going on) is tried again ten seconds later.
@@ -228,6 +244,8 @@ function moodle_build() {
     mkdir -p .ddev/php ;
     printf 'max_input_vars = 5000\n' > .ddev/php/moodle.ini ;
     moodle_write_cron ;
+    # The claim, so the row of the dashboard knows the site and offers its test users (the type php says nothing).
+    moodle_write_claim || { echo "The plugin's claim on the project could not be written." ; exit 1 ; } ;
   else
     # The type php says nothing of the platform: the plugin claims the project, so the tools and the dashboard
     # know it. Its PHP setting and its cron through the core's layer (webship/workspace#825).
